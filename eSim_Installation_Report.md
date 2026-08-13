@@ -1,78 +1,91 @@
-# eSim-2.5 Installation Report — Ubuntu 25.04
+eSim-2.5 Installation Report — Ubuntu 25.04
+Task: eSim Semester Long Internship – Autumn 2026, Task 4 (eSim Upgradation) Environment: Ubuntu 25.04 (Plucky Puffin), 64-bit, on a VirtualBox VM eSim Version: 2.5
 
-**Task:** eSim Semester Long Internship – Autumn 2026, Task 4 (eSim Upgradation)
-**Environment:** Ubuntu 25.04 (Plucky Puffin), 64-bit, VirtualBox VM
-**eSim Version:** 2.5
+Overview :
+I set up a fresh Ubuntu 25.04 VM specifically to test how well eSim-2.5's installer holds up on a very new Ubuntu release, since 25.04 is recent enough that most tooling hasn't caught up to it yet. As expected, the installer wasn't happy about it — I ran into three separate problems while working through it. Two of them I was able to trace back to their root cause and fix properly. The third turned out to be a genuine upstream version mismatch rather than something wrong with eSim's script, so I've documented it in detail below instead of forcing a fragile workaround.
 
-## Overview
-
-This report documents the problems encountered while installing eSim-2.5 on a fresh Ubuntu 25.04 system, along with the root-cause analysis and fixes applied. Two issues were identified and fully resolved. A third, deeper dependency conflict was identified and root-caused but left unresolved, as it stems from an upstream package version mismatch rather than a scripting bug.
-
-## Issue 1: Ubuntu 25.04 Not Recognized as a Supported Version
-
-### Problem
-Running `./install-eSim.sh --install` immediately failed with:
+Issue 1: Ubuntu 25.04 Not Recognized as a Supported Version
+What happened
+The very first thing I hit :- before the installer even got to doing anything was this:
 
 Detected Ubuntu Version:
 Unsupported Ubuntu version: 25.04 ()
+Straight abort. Not exactly a promising start.
 
+Digging into why
+I opened up install-eSim.sh to see what was going on. It reads the OS version from /etc/os-release and then runs it through a case statement that routes to a version-specific installer script sitting in install-eSim-scripts/ (things like install-eSim-24.04.sh, install-eSim-23.04.sh, and so on). Ubuntu 25.04 just isn't one of the listed cases, so it drops into the catch-all *) branch, prints the error, and exits.
 
-### Root Cause
-`install-eSim.sh` detects the OS version from `/etc/os-release`, then uses a `case` statement to route to a version-specific installer script. Ubuntu 25.04 is not a listed case, so it falls through to the catch-all `*)` branch and exits, even though a compatible installer (`install-eSim-24.04.sh`) already exists.
+What made this a little frustrating is that a perfectly usable installer script for 24.04 was already sitting right there in the folder — the script just had no way of knowing it could use it.
 
-### Fix
-Added a new case mapping Ubuntu 25.04 to the existing 24.04 installer script:
-```bash
+What I did
+I added a new case right before the existing "24.04") entry, pointing 25.04 at that same script:
+
+bash
 "25.04")
     SCRIPT="$SCRIPT_DIR/install-eSim-24.04.sh"
     ;;
-```
+    
+24.04 and 25.04 are close enough in terms of package availability that reusing the 24.04 script made sense here rather than writing a new one from scratch.
 
-### Result
-The installer now correctly detects Ubuntu 25.04 and proceeds instead of aborting.
+Did it work?
+Yes, the installer now recognizes 25.04 and moves on to the 24.04 script instead of bailing out immediately.
 
-## Issue 2: KiCad PPA Has No Build for Ubuntu 25.04 or 24.04
+Issue 2: KiCad's PPA Doesn't Have a Build for 25.04 (or Even 24.04)
+What happened
+With Issue 1 out of the way, the installer got further — it started adding KiCad's PPA, then fell over during apt update:
 
-### Problem
-After fixing Issue 1, adding the KiCad PPA and running `apt update` failed:
+Err: https://ppa.launchpadcontent.net/kicad/kicad-6.0-releases/ubuntu plucky Release
+  404  Not Found
+E: The repository '...ubuntu plucky Release' does not have a Release file.
+My first guess was that since we'd just told the system to "pretend" it's 24.04 for installer purposes, maybe the PPA just needed the codename noble instead of plucky. So I tried pointing it there manually — same result:
 
-404 Not Found — .../ubuntu plucky Release
+Err: https://ppa.launchpadcontent.net/kicad/kicad-6.0-releases/ubuntu noble Release
+  404  Not Found
+That ruled out my first theory and meant something deeper was going on.
 
-Pointing it at `noble` (24.04) produced the same class of 404 error.
+Digging into why
+The install-eSim-24.04.sh script adds KiCad's PPA using add-apt-repository, which just grabs whatever codename your system reports and assumes the PPA has a matching build. So I went and actually checked the PPA's page on Launchpad to see what it publishes builds for. Turns out this particular PPA (kicad/kicad-6.0-releases) only has packages for Lunar, Kinetic, Jammy, Focal, Bionic, and Xenial — it was never updated for noble (24.04), let alone plucky (25.04). So this isn't really eSim's script being broken; it's more that the script assumes a PPA will keep pace with new Ubuntu releases, and this one just hasn't.
 
-### Root Cause
-The KiCad 6.0 PPA (`kicad/kicad-6.0-releases`) only publishes builds for Lunar, Kinetic, Jammy, Focal, Bionic, and Xenial — it was never updated for `noble` or `plucky`.
+What I did
+I went with jammy (22.04) since that's the newest codename this PPA actually supports, and manually edited the entry in /etc/apt/sources.list:
 
-### Fix
-Manually edited `/etc/apt/sources.list` to point the KiCad PPA at `jammy` (22.04), the newest codename this PPA supports:
-```bash
+bash
 sudo sed -i 's#kicad-6.0-releases/ubuntu noble#kicad-6.0-releases/ubuntu jammy#' /etc/apt/sources.list
-```
+Did it work?
+Yes — apt update went through cleanly this time, no 404s, and it successfully fetched the jammy package index for the PPA:
 
-### Result
-`sudo apt update` completed successfully with no errors, fetching the KiCad PPA's jammy package index.
+Get: https://ppa.launchpadcontent.net/kicad/kicad-6.0-releases/ubuntu jammy InRelease [24.4 kB]
+Get: .../jammy/main amd64 Packages [7,464 B]
+Fetched 35.0 kB in 6s
+Issue 3 (Found, Not Yet Fixed): KiCad and OCCT Are Fighting Each Other
+What happened
+With the PPA finally resolving, I ran the installer again expecting it to sail through — instead it hit a wall during apt-get install:
 
-## Issue 3 (Identified, Unresolved): KiCad/OCCT Library Version Conflict
+The following packages have unmet dependencies:
+ libocct-visualization-7.8 : Depends: occt-misc (= 7.8.1+dfsg1-3)
+   but 1:7.5.2+dfsg1-0~202107020155~ubuntu22.04.1 is to be installed
+E: Unable to correct problems, you have held broken packages.
+Digging into why
+This one took a bit more untangling. It turns out the KiCad PPA, despite being named kicad-6.0-releases, is actually now serving KiCad 8.0.8 for the jammy codename — PPAs get updated over time and the name doesn't necessarily reflect what's currently inside anymore. KiCad 8.0.8 needs a newer OCCT library (libocct-visualization-7.8 >= 7.8.1+dfsg1), but the OCCT version available on this Ubuntu 25.04 system is an older 7.5.2 build. So apt is stuck between two repositories that don't agree on what version of a shared dependency should be installed.
 
-### Problem
-With the PPA resolving correctly, `apt-get install` surfaced a dependency conflict:
+Basically: the eSim installer was written back when this PPA served KiCad 6.x, which paired fine with older OCCT versions. Now the PPA quietly serves a much newer KiCad, and that newer KiCad wants OCCT libraries that this 25.04 + jammy-PPA combination just doesn't have available together.
 
-libocct-visualization-7.8 : Depends: occt-misc (= 7.8.1+dfsg1-3)
-but 1:7.5.2+dfsg1-0~202107020155~ubuntu22.04.1 is to be installed
+Where I left it
+I haven't resolved this one yet — it's a real version mismatch between repositories rather than something a simple script edit can patch over, since pinning the PPA codename to jammy can't bring back KiCad 6.x binaries that the PPA no longer serves at all. A few directions worth trying next:
 
-
-### Root Cause
-The KiCad PPA now serves KiCad 8.0.8 for `jammy` (not 6.0 as the PPA name implies), which requires a newer OCCT library than what's available on this Ubuntu 25.04 system. This is a genuine cross-repository version mismatch upstream, not a script bug.
-
-### Status
-Unresolved. Possible future fixes: pin an older KiCad package version if still in the PPA pool, use the Flatpak KiCad build instead, or wait for an eSim installer update targeting a current KiCad release.
+Pin an older, specific KiCad package version via apt-get install kicad=<version>, if one compatible with the available OCCT libraries still exists in the PPA's pool
+Sidestep apt entirely and install KiCad through Flatpak (org.kicad.KiCad), which bundles its own dependencies
+Flag this upstream so the eSim installer script can be updated to target a KiCad release that's actually compatible with current Ubuntu repositories
+I'm leaving this documented here rather than forcing something fragile, since I'd rather flag a real problem clearly than paper over it with a hacky fix that might break for the next person.
 
 ## Summary
 
-| # | Issue | Status |
-|---|---|---|
-| 1 | Ubuntu 25.04 not recognized | Fixed |
-| 2 | KiCad PPA missing 24.04/25.04 builds | Fixed |
-| 3 | KiCad 8.0.8 vs system OCCT conflict | Identified, unresolved |
+1: First up, I hit a wall right at the version check — Ubuntu 25.04 wasn't on the installer's radar at all. Fixed it by adding a new case to `install-eSim.sh` so 25.04 just reuses the existing 24.04 installer script, since the two are close enough compatibility-wise.
 
-**Technologies used:** Bash scripting, apt/dpkg package management, Ubuntu 25.04, Git.
+2: Next, the KiCad PPA turned out to have no build for either 24.04 or 25.04 — it simply hadn't been updated in a while. Fixed this by repointing it to `jammy` (22.04) in `/etc/apt/sources.list`, which is the newest codename the PPA actually publishes for.
+
+3: Last one I couldn't crack — the KiCad version the PPA now serves (8.0.8) wants newer OCCT libraries than what's available on this system. This isn't really something a quick script fix can solve, since it's a real mismatch between two separate repositories. I've written it up in detail above, along with a few ideas for how someone could tackle it going forward.
+
+So, out of the three problems I ran into, two are properly fixed, and the third is fully understood and documented even though it's still open.
+
+*Tools/tech used along the way:- Bash scripting , python, apt/dpkg, Ubuntu 25.04 OS, Git, and a fair amount of trial and error.
