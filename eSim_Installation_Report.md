@@ -10,7 +10,7 @@ Issues found: 3. Issues fixed directly: 2. Issues with a confirmed root cause an
 Evidence
 Proof the Issue 2 fix worked — apt update running clean after repointing the KiCad PPA to jammy, with the PPA resolving successfully as the very first line (no more 404 errors):
 
-Show Image : https://github.com/s24kousalyesiddhi-77/eSim/blob/installers/apt-update-success.png
+Show Image : apt-update-success.png
 
 Proof KiCad works fine on its own — the Flatpak install of KiCad completing successfully, confirming the OCCT conflict in Issue 3 is specific to apt's dependency resolution, not to KiCad itself:
 
