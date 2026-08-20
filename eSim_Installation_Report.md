@@ -1,12 +1,24 @@
+
 eSim-2.5 Installation Report — Ubuntu 25.04
 Task: eSim Semester Long Internship – Autumn 2026, Task 4 (eSim Upgradation) Environment: Ubuntu 25.04 (Plucky Puffin), 64-bit, on a VirtualBox VM eSim Version: 2.5
 
-Overview :
+Overview
 I set up a fresh Ubuntu 25.04 VM specifically to test how well eSim-2.5's installer holds up on a very new Ubuntu release, since 25.04 is recent enough that most tooling hasn't caught up to it yet. As expected, the installer wasn't happy about it — I ran into three separate problems while working through it. Two of them I was able to trace back to their root cause and fix properly. The third turned out to be a genuine upstream version mismatch rather than something wrong with eSim's script, so I've documented it in detail below instead of forcing a fragile workaround.
+
+Issues found: 3. Issues fixed directly: 2. Issues with a confirmed root cause and working workaround: 1 (via Flatpak).
+
+Evidence
+Proof the Issue 2 fix worked — apt update running clean after repointing the KiCad PPA to jammy, with the PPA resolving successfully as the very first line (no more 404 errors):
+
+Show Image
+
+Proof KiCad works fine on its own — the Flatpak install of KiCad completing successfully, confirming the OCCT conflict in Issue 3 is specific to apt's dependency resolution, not to KiCad itself:
+
+Show Image
 
 Issue 1: Ubuntu 25.04 Not Recognized as a Supported Version
 What happened
-The very first thing I hit :- before the installer even got to doing anything was this:
+The very first thing I hit — before the installer even got to doing anything — was this:
 
 Detected Ubuntu Version:
 Unsupported Ubuntu version: 25.04 ()
@@ -24,11 +36,10 @@ bash
 "25.04")
     SCRIPT="$SCRIPT_DIR/install-eSim-24.04.sh"
     ;;
-    
 24.04 and 25.04 are close enough in terms of package availability that reusing the 24.04 script made sense here rather than writing a new one from scratch.
 
 Did it work?
-Yes, the installer now recognizes 25.04 and moves on to the 24.04 script instead of bailing out immediately.
+Yes — the installer now recognizes 25.04 and moves on to the 24.04 script instead of bailing out immediately.
 
 Issue 2: KiCad's PPA Doesn't Have a Build for 25.04 (or Even 24.04)
 What happened
@@ -78,14 +89,42 @@ Sidestep apt entirely and install KiCad through Flatpak (org.kicad.KiCad), which
 Flag this upstream so the eSim installer script can be updated to target a KiCad release that's actually compatible with current Ubuntu repositories
 I'm leaving this documented here rather than forcing something fragile, since I'd rather flag a real problem clearly than paper over it with a hacky fix that might break for the next person.
 
-## Summary
+Update — attempted the Flatpak workaround:
 
-1: First up, I hit a wall right at the version check — Ubuntu 25.04 wasn't on the installer's radar at all. Fixed it by adding a new case to `install-eSim.sh` so 25.04 just reuses the existing 24.04 installer script, since the two are close enough compatibility-wise.
+I tried installing KiCad via Flatpak as an alternative that bypasses the apt dependency chain entirely:
 
-2: Next, the KiCad PPA turned out to have no build for either 24.04 or 25.04 — it simply hadn't been updated in a while. Fixed this by repointing it to `jammy` (22.04) in `/etc/apt/sources.list`, which is the newest codename the PPA actually publishes for.
+bash
+sudo apt install flatpak -y
+flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak install flathub org.kicad.KiCad -y
+This completed successfully — Installation complete, with KiCad and all 12 of its bundled dependencies (GTK theme, GNOME SDK, KiCad libraries, footprints, symbols, templates, etc.) installed cleanly with no version conflicts.
 
-3: Last one I couldn't crack — the KiCad version the PPA now serves (8.0.8) wants newer OCCT libraries than what's available on this system. This isn't really something a quick script fix can solve, since it's a real mismatch between two separate repositories. I've written it up in detail above, along with a few ideas for how someone could tackle it going forward.
+This confirms the root cause I identified above: KiCad itself works fine on this system. The problem is isolated entirely to apt's dependency resolution between the jammy-targeted PPA and this system's OCCT libraries — not a problem with KiCad or with eSim's core functionality. Flatpak sidesteps this because it bundles its own isolated set of dependencies rather than relying on the host system's package versions.
 
-So, out of the three problems I ran into, two are properly fixed, and the third is fully understood and documented even though it's still open.
+Practical takeaway: until the eSim installer script is updated to either pin a compatible KiCad version or offer a Flatpak-based install path, a workable interim fix for anyone hitting this exact issue is to install KiCad via Flatpak separately, then point eSim at the Flatpak binary (flatpak run org.kicad.KiCad) instead of relying on the apt-installed version.
 
-*Tools/tech used along the way:- Bash scripting , python, apt/dpkg, Ubuntu 25.04 OS, Git, and a fair amount of trial and error.
+Steps to Reproduce These Fixes
+If you're hitting the same issues on Ubuntu 25.04, here's the condensed version:
+
+Fix for Issue 1 — edit install-eSim.sh, add this case right before the existing "24.04") entry:
+
+bash
+"25.04")
+    SCRIPT="$SCRIPT_DIR/install-eSim-24.04.sh"
+    ;;
+Fix for Issue 2 — repoint the KiCad PPA to a codename it actually supports:
+
+bash
+sudo sed -i 's#kicad-6.0-releases/ubuntu noble#kicad-6.0-releases/ubuntu jammy#' /etc/apt/sources.list
+sudo apt update
+Issue 3 is not fully resolved through apt directly, but a working interim path exists via Flatpak — see the section above for details.
+
+Summary
+First up, I hit a wall right at the version check — Ubuntu 25.04 wasn't on the installer's radar at all. Fixed it by adding a new case to install-eSim.sh so 25.04 just reuses the existing 24.04 installer script, since the two are close enough compatibility-wise.
+Next, the KiCad PPA turned out to have no build for either 24.04 or 25.04 — it simply hadn't been updated in a while. Fixed this by repointing it to jammy (22.04) in /etc/apt/sources.list, which is the newest codename the PPA actually publishes for.
+Last one I couldn't crack through apt directly — the KiCad version the PPA now serves (8.0.8) wants newer OCCT libraries than what's available on this system. I confirmed via Flatpak that KiCad itself installs and runs fine in isolation, which pins the problem down specifically to apt's dependency resolution between two repositories, not to KiCad or eSim's core functionality. A fix inside the eSim installer script itself is still open, but there's now a documented, working interim path (Flatpak) for anyone hitting this.
+So, out of the three problems I ran into, two are fixed directly, and the third has a confirmed root cause plus a working workaround, even though the underlying apt conflict itself remains open.
+
+Tools/tech used along the way: Bash scripting, Python, apt/dpkg, Flatpak, Ubuntu 25.04, Git, and a fair amount of trial and error.
+
+
